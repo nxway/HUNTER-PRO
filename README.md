@@ -106,7 +106,7 @@ python score.py
 
 | файл | что проверить | как |
 |---|---|---|
-| `sources/fsa_declarations.py` | `SEARCH_URL`, `_build_params()`, `_parse_results()` | открыть pub.fsa.gov.ru/rds/declaration, DevTools → Network, сверить реальный запрос |
+| `sources/fsa_declarations.py` | цепочка `_get_token()` → `_fetch_page()` целиком (структура запроса/ответа снята с реального сайта и проверена на реальных данных — не угадана; не проверен только сам факт, что цепочка HTTP-вызовов реально отрабатывает без сети) | просто запустить `python -m sources.fsa_declarations --region 50 --days 30` и посмотреть на ошибку, если будет |
 | `enrich/site.py` | `_parse_search_results()` (поиск через DuckDuckGo) | сделать поисковый запрос вручную, сверить разметку результата |
 | `enrich/dgis.py` | адрес поиска и селекторы карточки организации | открыть 2gis.ru, найти организацию, Inspect на телефоне/адресе/сайте |
 | `enrich/risk.py` | `FSSP_URL`, `FEDRESURS_URL` и разбор ответа | получить токены у ФССП/Федресурс, свериться с их документацией |
