@@ -17,6 +17,7 @@ import argparse
 
 def cmd_run(args: argparse.Namespace) -> None:
     import db
+    import inbox_import
     import score
     from enrich.site import enrich_missing_phones
     from rich.console import Console
@@ -24,6 +25,13 @@ def cmd_run(args: argparse.Namespace) -> None:
 
     console = Console()
     conn = db.init_db()
+
+    inbox_totals = inbox_import.import_inbox(conn)
+    if inbox_totals["files"]:
+        console.print(
+            f"inbox_import: файлов {inbox_totals['files']} · обработано {inbox_totals['processed']} "
+            f"· понижено по массовому вердикту {inbox_totals['mass_downgraded']}"
+        )
 
     sources_map = registry.discover()
     if not sources_map:

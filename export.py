@@ -41,8 +41,14 @@ _COLUMN_WIDTHS = [32, 16, 16, 20, 10, 24, 14, 10, 14, 16, 30]
 
 def _candidates(conn) -> list[dict]:
     """Компании green/yellow, которые ещё не выгружались, либо всплывают
-    повторно: новый сигнал после прошлой выгрузки И прошло больше
-    REEXPORT_AFTER_DAYS дней (8.3 ТЗ)."""
+    повторно одним из двух равноправных путей:
+      - новый сигнал после прошлой выгрузки И прошло больше
+        REEXPORT_AFTER_DAYS дней (8.3 ТЗ);
+      - подошёл срок возврата после исхода звонка (touches.next_date,
+        7.5/8.4 ТЗ: полгода для "возит сам"/"есть экспедитор"/"не тот
+        профиль", неделя для "не дозвонился") — и после этого исхода ещё
+        не было новой выгрузки (иначе один и тот же возврат всплывал бы
+        в файле бесконечно)."""
     rows = conn.execute(
         """
         SELECT c.*, (
@@ -61,10 +67,38 @@ def _candidates(conn) -> list[dict]:
                       WHERE s.inn = c.inn AND s.created_at > c.exported_at
                   )
               )
+              OR EXISTS (
+                  SELECT 1 FROM touches t
+                  WHERE t.inn = c.inn
+                    AND t.next_date <= date('now')
+                    AND (c.exported_at IS NULL OR t.created_at > c.exported_at)
+              )
           )
         ORDER BY c.bucket, c.name
         """,
         {"reexport_days": config.REEXPORT_AFTER_DAYS},
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _suggestion_rows(conn) -> list[dict]:
+    """Раздел 7.5 ТЗ: "правила система предлагает сама, с цифрами" —
+    товарные группы, где много звонков, ноль заявок и много "возит сам".
+    Ничего не исключает автоматически — только показывает лист, решение
+    вписываешь в конфиг сам."""
+    rows = conn.execute(
+        """
+        SELECT c.product_code AS product_code,
+               COUNT(*) AS calls,
+               SUM(CASE WHEN t.result = 'дал заявку' THEN 1 ELSE 0 END) AS deals,
+               SUM(CASE WHEN t.result = 'возит сам' THEN 1 ELSE 0 END) AS self_haul
+        FROM touches t
+        JOIN companies c ON c.inn = t.inn
+        WHERE c.product_code IS NOT NULL
+        GROUP BY c.product_code
+        HAVING calls >= 5 AND deals = 0
+        ORDER BY calls DESC
+        """
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -94,7 +128,7 @@ def _risk_text(raw: Optional[str]) -> str:
     return "; ".join(flags) if isinstance(flags, list) else str(flags)
 
 
-def build_workbook(rows: list[dict]) -> openpyxl.Workbook:
+def build_workbook(rows: list[dict], suggestions: Optional[list[dict]] = None) -> openpyxl.Workbook:
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Лиды"
@@ -140,6 +174,25 @@ def build_workbook(rows: list[dict]) -> openpyxl.Workbook:
     ws.add_data_validation(dv)
     dv.add(f"{outcome_letter}2:{outcome_letter}{ws.max_row}")
 
+    if suggestions:
+        ws2 = wb.create_sheet("Правила")
+        ws2.append(["Код продукции", "Звонков", "Заявок", "Возят сами", "Предложение"])
+        for cell in ws2[1]:
+            cell.font = Font(bold=True)
+        for s in suggestions:
+            ws2.append(
+                [
+                    s["product_code"],
+                    s["calls"],
+                    s["deals"],
+                    s["self_haul"],
+                    f"{s['calls']} звонков, {s['deals']} заявок, {s['self_haul']} раз возят сами — исключить?",
+                ]
+            )
+        for i, width in enumerate([16, 10, 10, 12, 60], start=1):
+            ws2.column_dimensions[get_column_letter(i)].width = width
+        ws2.freeze_panes = "A2"
+
     return wb
 
 
@@ -154,7 +207,7 @@ def export_leads(conn) -> Optional[Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"hunter-{date.today().isoformat()}.xlsx"
 
-    wb = build_workbook(rows)
+    wb = build_workbook(rows, suggestions=_suggestion_rows(conn))
     wb.save(out_path)  # файл на диске — точка невозврата, дальше можно метить exported_at
 
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
