@@ -1,0 +1,102 @@
+"""
+hunter.py — единая точка входа: run | export (разделы VIII, X ТЗ).
+
+Логики сбора/обогащения/выгрузки внутри себя не держит — только вызывает по
+порядку sources/*.py, enrich/*.py, score.py, export.py, каждый из которых
+по-прежнему запускается и сам по себе (1.1.7 ТЗ). Один источник, упавший
+целиком, не должен останавливать остальные и весь прогон (раздел X ТЗ).
+
+Запуск:
+    python hunter.py run       # собрать + обогатить телефоном + разложить по корзинам
+    python hunter.py export    # выгрузить .xlsx новых компаний
+"""
+from __future__ import annotations
+
+import argparse
+
+
+def cmd_run(args: argparse.Namespace) -> None:
+    import db
+    import score
+    from enrich.site import enrich_missing_phones
+    from rich.console import Console
+    from sources import registry
+
+    console = Console()
+    conn = db.init_db()
+
+    sources_map = registry.discover()
+    if not sources_map:
+        console.print("[yellow]hunter run: не найдено ни одного источника в sources/[/yellow]")
+
+    for key, module in sources_map.items():
+        settings = dict(module.SPEC.default_settings)
+        collected = new_companies = new_signals = 0
+        try:
+            for lead in module.collect(settings):
+                result = db.ingest(conn, lead)
+                collected += 1
+                new_companies += int(result.company_new)
+                new_signals += int(result.signal_new)
+        except Exception as exc:  # noqa: BLE001 — сбой одного источника не должен ронять прогон (раздел X ТЗ)
+            console.print(f"[red]{key}: сбой сбора — {exc}[/red]")
+            continue
+        console.print(f"{key}: собрано {collected} · новых компаний {new_companies} · новых сигналов {new_signals}")
+
+    stats = enrich_missing_phones(conn, args.enrich_limit, console=console)
+    console.print(
+        f"обогащение телефона: проверено {stats['checked']} · нашли на сайте {stats['via_site']} "
+        f"· нашли в 2ГИС {stats['via_dgis']} · не нашли {stats['not_found']}"
+    )
+
+    counts = score.assign_buckets(conn)
+    conn.close()
+    console.print(f"score: зелёных {counts['green']} · жёлтых {counts['yellow']} · красных {counts['red']}")
+
+
+def cmd_export(args: argparse.Namespace) -> None:
+    import os
+    import sys
+
+    import db
+    import export
+    from rich.console import Console
+
+    console = Console()
+    conn = db.init_db()
+    path = export.export_leads(conn)
+    conn.close()
+    if not path:
+        console.print("export: новых компаний для выгрузки нет")
+        return
+
+    console.print(f"export: выгружено {path}")
+    # 8.1 ТЗ: выгрузка сразу открывает файл — это и есть "кнопка".
+    try:
+        if sys.platform == "win32":
+            os.startfile(path)  # noqa: S606 — открытие своего только что созданного файла
+        elif sys.platform == "darwin":
+            os.system(f'open "{path}"')
+        else:
+            os.system(f'xdg-open "{path}"')
+    except OSError as exc:
+        console.print(f"[yellow]не удалось открыть файл автоматически: {exc}[/yellow]")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="HUNTER-PRO")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_run = sub.add_parser("run", help="собрать + обогатить телефоном + разложить по корзинам")
+    p_run.add_argument("--enrich-limit", type=int, default=100)
+    p_run.set_defaults(func=cmd_run)
+
+    p_export = sub.add_parser("export", help="выгрузить .xlsx новых компаний")
+    p_export.set_defaults(func=cmd_export)
+
+    args = parser.parse_args()
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

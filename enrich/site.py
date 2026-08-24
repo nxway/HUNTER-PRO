@@ -132,18 +132,12 @@ def find_site(name: str, city: Optional[str] = None) -> Optional[str]:
     return _parse_search_results(html)
 
 
-def _main() -> None:
-    parser = argparse.ArgumentParser(description="Обогащение телефоном/сайтом + раскладка по корзинам")
-    parser.add_argument("--limit", type=int, default=100, help="максимум компаний за прогон")
-    args = parser.parse_args()
-
+def enrich_missing_phones(conn, limit: int, console=None) -> dict[str, int]:
+    """Обходит компании без телефона: сайт -> (при неудаче) 2ГИС.
+    Переиспользуется и из CLI этого модуля, и из hunter.py run — логика
+    сама по себе от способа запуска не зависит (1.1.7 ТЗ)."""
     import db
-    import score
     from enrich import dgis
-    from rich.console import Console
-
-    console = Console()
-    conn = db.init_db()
 
     rows = conn.execute(
         """
@@ -151,7 +145,7 @@ def _main() -> None:
         WHERE phone IS NULL OR phone = ''
         LIMIT ?
         """,
-        (args.limit,),
+        (limit,),
     ).fetchall()
 
     via_site = via_dgis = not_found = 0
@@ -171,7 +165,8 @@ def _main() -> None:
                     found_phone = data.phones[0]
                     phone_source = "site"
         except httpx.HTTPError as exc:
-            console.print(f"[yellow]{inn}: сайт недоступен ({exc}), пробую 2ГИС[/yellow]")
+            if console:
+                console.print(f"[yellow]{inn}: сайт недоступен ({exc}), пробую 2ГИС[/yellow]")
 
         if not found_phone:
             try:
@@ -181,7 +176,8 @@ def _main() -> None:
                     found_site = found_site or result.site
                     phone_source = "dgis"
             except dgis.DgisLookupError as exc:
-                console.print(f"[yellow]{inn}: 2ГИС не дал результата ({exc})[/yellow]")
+                if console:
+                    console.print(f"[yellow]{inn}: 2ГИС не дал результата ({exc})[/yellow]")
 
         fields = {}
         if found_phone:
@@ -203,11 +199,28 @@ def _main() -> None:
 
         time.sleep(random.uniform(*config.REQUEST_DELAY))
 
+    return {"checked": len(rows), "via_site": via_site, "via_dgis": via_dgis, "not_found": not_found}
+
+
+def _main() -> None:
+    parser = argparse.ArgumentParser(description="Обогащение телефоном/сайтом + раскладка по корзинам")
+    parser.add_argument("--limit", type=int, default=100, help="максимум компаний за прогон")
+    args = parser.parse_args()
+
+    import db
+    import score
+    from rich.console import Console
+
+    console = Console()
+    conn = db.init_db()
+
+    stats = enrich_missing_phones(conn, args.limit, console=console)
     counts = score.assign_buckets(conn)
     conn.close()
     console.print(
-        f"enrich.site: проверено {len(rows)} · нашли на сайте {via_site} · нашли в 2ГИС {via_dgis} "
-        f"· не нашли {not_found} · зелёных {counts['green']} · жёлтых {counts['yellow']} · красных {counts['red']}"
+        f"enrich.site: проверено {stats['checked']} · нашли на сайте {stats['via_site']} "
+        f"· нашли в 2ГИС {stats['via_dgis']} · не нашли {stats['not_found']} "
+        f"· зелёных {counts['green']} · жёлтых {counts['yellow']} · красных {counts['red']}"
     )
 
 

@@ -122,6 +122,12 @@ MIGRATIONS: dict[int, list[str]] = {
         "CREATE INDEX IF NOT EXISTS idx_comp_bucket  ON companies(bucket)",
         "CREATE INDEX IF NOT EXISTS idx_usage_ts     ON ai_usage(ts)",
     ],
+    # Этап 3, раздел 8.3 ТЗ: одну компанию выгружаем один раз.
+    2: [
+        "ALTER TABLE companies ADD COLUMN exported_at TEXT",
+        "ALTER TABLE companies ADD COLUMN export_count INTEGER DEFAULT 0",
+        "CREATE INDEX IF NOT EXISTS idx_comp_export ON companies(exported_at)",
+    ],
 }
 
 
