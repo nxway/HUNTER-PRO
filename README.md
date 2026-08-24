@@ -6,11 +6,22 @@
 
 ## Установка
 
+Всё ставится в изолированное окружение внутри папки проекта (`.venv/`),
+глобальный Python и система не трогаются. Проще всего — запустить
+`HUNTER — установить.bat` (создаёт `.venv`, ставит зависимости и Chromium
+для Playwright, копирует `.env.example` в `.env`). Вручную то же самое:
+
 ```
-pip install -r requirements.txt
-playwright install chromium
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\python -m playwright install chromium
 copy .env.example .env
 ```
+
+Остальные `.bat`-ярлыки (`собрать`, `выгрузить`, `поставить в расписание`)
+сами используют `.venv\Scripts\python.exe`, а не системный `python` — руками
+активировать окружение (`.venv\Scripts\activate`) для них не нужно, но можно,
+если запускаете команды из README вручную в терминале.
 
 Впишите в `.env`:
 - `OPENROUTER_API_KEY` — обязателен для `ai/*` (этап 7). Без него классификация
@@ -24,6 +35,9 @@ copy .env.example .env
 чему внешний сайт сможет с вами связаться, если сочтёт нужным.
 
 ## Команды
+
+Команды ниже — с активированным окружением (`.venv\Scripts\activate` в
+терминале). Без активации замените `python` на `.venv\Scripts\python.exe`.
 
 ```
 python hunter.py run              # ночной цикл: собрать + обогатить + ИИ + разложить по корзинам

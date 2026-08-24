@@ -1,5 +1,10 @@
 @echo off
 chcp 65001 >nul
 cd /d "%~dp0"
-python hunter.py run
+if not exist ".venv\Scripts\python.exe" (
+    echo Окружение не найдено. Сначала запустите "HUNTER — установить.bat".
+    pause
+    exit /b 1
+)
+".venv\Scripts\python.exe" hunter.py run
 pause
