@@ -17,6 +17,7 @@ rich.console.Console() для интерактивного вывода — им
 from __future__ import annotations
 
 import logging
+import re
 from logging.handlers import TimedRotatingFileHandler
 from typing import Optional
 
@@ -25,6 +26,19 @@ from rich.logging import RichHandler
 import config
 
 _logger: Optional[logging.Logger] = None
+
+_MARKUP_RE = re.compile(r"\[/?[a-zA-Z][a-zA-Z0-9 _#]*\]")
+
+
+class _PlainFileFormatter(logging.Formatter):
+    """Некоторые сообщения приходят с rich-разметкой вида [yellow]...[/yellow]
+    (см. LoggerConsole ниже) — консоли она красит текст, а в текстовый файл
+    иначе попадёт как есть, мусором. Файловый форматтер её вырезает, консоль
+    (RichHandler, markup=True) получает исходное сообщение без изменений —
+    у каждого обработчика свой форматтер, один на другой не влияет."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        return _MARKUP_RE.sub("", super().format(record))
 
 
 def get_logger() -> logging.Logger:
@@ -41,7 +55,7 @@ def get_logger() -> logging.Logger:
     file_handler = TimedRotatingFileHandler(
         config.LOG_DIR / "hunter.log", when="midnight", backupCount=30, encoding="utf-8"
     )
-    file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s: %(message)s"))
+    file_handler.setFormatter(_PlainFileFormatter("%(asctime)s %(levelname)s: %(message)s"))
     logger.addHandler(file_handler)
 
     console_handler = RichHandler(show_path=False, show_level=False, markup=True)

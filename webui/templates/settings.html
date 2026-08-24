@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Настройки — HUNTER-PRO{% endblock %}
+{% block content %}
+
+{% if message %}<div class="flash">{{ message }}</div>{% endif %}
+
+<form class="settings-form" method="post" action="{{ url_for('settings_page') }}">
+
+  <div class="card">
+    <h2>География и охват</h2>
+    <div class="field-grid">
+      <div class="field">
+        <label>Регионы работы (коды через запятую)<span class="hint">первые две цифры ИНН</span></label>
+        <input type="text" name="target_regions" value="{{ settings.target_regions|join(', ') }}">
+      </div>
+      <div class="field">
+        <label>Мои рабочие плечи (города через запятую)</label>
+        <input type="text" name="my_lanes" value="{{ settings.my_lanes|join(', ') }}">
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>ИИ и предохранители расходов</h2>
+    <div class="field-grid">
+      <div class="field">
+        <label>Модель для классификации (MODEL_CHEAP)</label>
+        <input type="text" name="model_cheap" value="{{ settings.model_cheap }}" placeholder="например, some-model:floor">
+      </div>
+      <div class="field">
+        <label>Запасная модель (MODEL_FALLBACK)</label>
+        <input type="text" name="model_fallback" value="{{ settings.model_fallback }}">
+      </div>
+      <div class="field">
+        <label>Лимит вызовов ИИ за прогон</label>
+        <input type="number" name="max_ai_calls_per_run" value="{{ settings.max_ai_calls_per_run }}">
+      </div>
+      <div class="field">
+        <label>Дневной лимит трат на ИИ, $<span class="hint">жёсткий стоп</span></label>
+        <input type="number" step="0.01" name="max_ai_spend_per_day_usd" value="{{ settings.max_ai_spend_per_day_usd }}">
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Сеть и повторные выгрузки</h2>
+    <div class="field-grid">
+      <div class="field">
+        <label>Пауза между запросами, сек — от</label>
+        <input type="number" step="0.1" name="request_delay_min" value="{{ settings.request_delay_min }}">
+      </div>
+      <div class="field">
+        <label>Пауза между запросами, сек — до</label>
+        <input type="number" step="0.1" name="request_delay_max" value="{{ settings.request_delay_max }}">
+      </div>
+      <div class="field">
+        <label>Таймаут запроса, сек</label>
+        <input type="number" name="http_timeout" value="{{ settings.http_timeout }}">
+      </div>
+      <div class="field">
+        <label>Компания всплывает повторно через, дней</label>
+        <input type="number" name="reexport_after_days" value="{{ settings.reexport_after_days }}">
+      </div>
+    </div>
+    <div class="field">
+      <label>User-Agent<span class="hint">впишите свою контактную почту</span></label>
+      <input type="text" name="user_agent" value="{{ settings.user_agent }}">
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Веса скоринга «Подходит» (0–100 суммарно)</h2>
+    <div class="field-grid">
+      <div class="field"><label>Размер бизнеса ок</label><input type="number" name="weight_size_ok" value="{{ settings.signal_weights.size_ok }}"></div>
+      <div class="field"><label>ОСНО</label><input type="number" name="weight_vat_osno" value="{{ settings.signal_weights.vat_osno }}"></div>
+      <div class="field"><label>Город на моих плечах</label><input type="number" name="weight_my_lane" value="{{ settings.signal_weights.my_lane }}"></div>
+      <div class="field"><label>Прямой телефон</label><input type="number" name="weight_direct_phone" value="{{ settings.signal_weights.direct_phone }}"></div>
+      <div class="field"><label>Известен груз</label><input type="number" name="weight_cargo_known" value="{{ settings.signal_weights.cargo_known }}"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Ключи и токены</h2>
+    <p class="muted small" style="margin-top:-6px;">Хранятся в .env, не в git. Поле пустое — значит, значение не меняется при сохранении.</p>
+    {% for key, info in env_status.items() %}
+    <div class="field">
+      <label>{{ key }}<span class="hint">{{ info.hint }}</span></label>
+      <input type="password" name="env_{{ key }}"
+             placeholder="{{ 'сейчас: ' + info.masked if info.set else 'не задан' }}">
+    </div>
+    {% endfor %}
+  </div>
+
+  <button type="submit" class="btn">Сохранить</button>
+</form>
+{% endblock %}

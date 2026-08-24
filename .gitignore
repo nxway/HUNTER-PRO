@@ -1,4 +1,5 @@
 .env
+settings.json
 leads.sqlite
 leads.sqlite-wal
 leads.sqlite-shm
