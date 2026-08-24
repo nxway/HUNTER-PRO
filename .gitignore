@@ -10,3 +10,4 @@ inbox/
 __pycache__/
 *.pyc
 .venv/
+.pyembed/

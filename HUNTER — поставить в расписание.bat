@@ -2,14 +2,14 @@
 chcp 65001 >nul
 cd /d "%~dp0"
 
-if not exist ".venv\Scripts\python.exe" (
+if not exist ".pyembed\python.exe" (
     echo Окружение не найдено. Сначала запустите "HUNTER — установить.bat".
     pause
     exit /b 1
 )
 
 echo Создаю задание в планировщике Windows: hunter.py run каждую ночь в 02:00...
-schtasks /create /tn "HUNTER-PRO ночной сбор" /tr "\"%~dp0.venv\Scripts\python.exe\" \"%~dp0hunter.py\" run" /sc daily /st 02:00 /f
+schtasks /create /tn "HUNTER-PRO ночной сбор" /tr "\"%~dp0.pyembed\python.exe\" \"%~dp0hunter.py\" run" /sc daily /st 02:00 /f
 
 if %errorlevel%==0 (
     echo.
