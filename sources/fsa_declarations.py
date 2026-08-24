@@ -8,25 +8,31 @@ sources/fsa_declarations.py — источник: реестр декларац�
 по устройству источника, без ОКВЭД и стоп-слов. Заодно источник сразу даёт
 ИНН (в списке, отдельно заходить в карточку не нужно) и текст продукции.
 
-СТАТУС ПРОВЕРКИ: изначально был написан вслепую (сеть песочницы блокирует
-*.gov.ru) по угаданной структуре HTML-страницы — и угадал неверно: это не
-серверный HTML, а Angular-приложение с JSON-API. Переписан по РЕАЛЬНЫМ
-запросам, снятым пользователем через DevTools на живом pub.fsa.gov.ru
-24.08.2026:
-  1. POST /login с телом {"username":"anonymous","password":"hrgesf7HDR67Bd"}
-     и заголовком Cookie: session-cookie=<случайная строка, генерируем сами> —
-     сервер возвращает JWT-токен НЕ в теле, а в заголовке ОТВЕТА Authorization.
-     Токен живёт ~8 часов (payload: iss=FAU NIA, sub=anonymous) — получаем
-     заново в начале каждого прогона, не кешируем между запусками.
-  2. POST /api/v1/rds/common/declarations/get с этим токеном в Authorization
-     запроса — тело и структура ответа сняты живьём, см. _build_payload()
-     и парсинг в collect(). ИНН заявителя — поле creatorInn прямо в списке.
-Сама механика (логин → токен → постраничный запрос) проверена только по
-снятым дампам, не прогнана целиком в этой сессии (сеть по-прежнему
-заблокирована) — это единственное, что стоит перепроверить в первую
-очередь при первом реальном запуске: `python -m sources.fsa_declarations`.
-Если сломается — скорее всего на шаге логина или на структуре ответа
-declarations/get, оба места отмечены ЗОНА РИСКА ниже.
+СТАТУС ПРОВЕРКИ — история трёх реальных попыток:
+  1. Изначально написан вслепую по угаданной структуре HTML — угадал
+     неверно: это Angular-приложение с JSON-API, не серверный HTML.
+  2. Переписан под реальный API (POST /login → JWT в заголовке ответа →
+     POST /api/v1/rds/common/declarations/get), снятый пользователем через
+     DevTools. Живой прогон через httpx получил 403 Forbidden на /login.
+  3. Добавлены браузероподобные заголовки (User-Agent Chrome, Origin,
+     Sec-Fetch-*) — 403 остался. Значит, дело не в заголовках: сайт стоит
+     за Bitrix (кука BITRIX_CONVERSION_CONTEXT_s1 в снятом дампе), и
+     похоже, что защита смотрит на то, что HTTP-клиент не подделает в
+     принципе — отпечаток TLS-соединения и/или реальное исполнение JS
+     страницы перед вызовом API. Единственный надёжный способ пройти
+     такую защиту — не подделывать браузер, а быть браузером: источник
+     переведён на Playwright (уже зависимость проекта — изначально для
+     2ГИС, новой не добавляли). Логин и запрос деклараций выполняются
+     через fetch() ВНУТРИ страницы, реально загруженной в Chromium —
+     тот же TLS/JS-контекст, что и у настоящего пользователя. Заодно
+     отпала нужда вручную генерировать session-cookie: её выставляет
+     собственный JS сайта при обычной загрузке страницы.
+
+Ни разу не проверено вживую до конца (сеть песочницы по-прежнему
+заблокирована) — только по шагам, которые сообщал пользователь. Если и
+это не пройдёт — следующая причина, скорее всего, IP-блокировка или более
+глубокая защита, для которых нужен уже другой разговор (снова смотреть
+реальный ответ).
 
 Запуск как отдельный модуль (1.1.7 ТЗ):
     python -m sources.fsa_declarations --region 50 --days 30
@@ -36,14 +42,10 @@ from __future__ import annotations
 import argparse
 import random
 import re
-import secrets
 import sys
 import time
 from datetime import date, timedelta
 from typing import Iterator, Optional
-
-import httpx
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 import config
 from enrich.inn import region_of, validate as validate_inn
@@ -55,7 +57,7 @@ SPEC = SourceSpec(
     kind="event",
     signal_type="new_declaration",
     gives_inn=True,
-    needs_browser=False,
+    needs_browser=True,  # антибот-защита сайта не пропускает обычный HTTP-клиент, см. докстринг
     default_settings={
         "regions": config.TARGET_REGIONS,
         "days": 30,
@@ -70,6 +72,7 @@ SPEC = SourceSpec(
     },
 )
 
+REGISTRY_PAGE_URL = "https://pub.fsa.gov.ru/rds/declaration"
 LOGIN_URL = "https://pub.fsa.gov.ru/login"
 DECLARATIONS_URL = "https://pub.fsa.gov.ru/api/v1/rds/common/declarations/get"
 
@@ -85,55 +88,40 @@ _ANON_PASSWORD = "hrgesf7HDR67Bd"
 # возвращать пустые/усечённые страницы — понизить до 10.
 _PAGE_SIZE = 50
 
-# ОТСТУПЛЕНИЕ ОТ ОБЩЕГО ПРАВИЛА ПРОЕКТА (12.2 ТЗ, "внятный User-Agent с
-# контактной почтой"): первый живой прогон вернул 403 Forbidden на самом
-# /login с "вежливым" User-Agent вида HunterPro/1.0 — сайт стоит за Bitrix
-# (видно по куке BITRIX_CONVERSION_CONTEXT_s1 в снятом дампе), у которого
-# есть встроенная защита от ботов, отсекающая нестандартные User-Agent и
-# отсутствующие Sec-Fetch-*/Origin. Раз доступ анонимный и публичный (сам
-# сайт выдаёт токен без входа под реальным пользователем), выдаём себя за
-# обычный браузер только для ЭТОГО источника — иначе не достучаться вообще.
-# Для сайтов компаний (enrich/site.py) такой необходимости не возникало,
-# там остаётся config.USER_AGENT.
-_BROWSER_HEADERS = {
-    "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
-    ),
-    "Origin": "https://pub.fsa.gov.ru",
-    "Referer": "https://pub.fsa.gov.ru/rds/declaration",
-    "Sec-Fetch-Dest": "empty",
-    "Sec-Fetch-Mode": "cors",
-    "Sec-Fetch-Site": "same-origin",
-}
-
 _CITY_RE = re.compile(r"г(?:ород)?\.?\s+([А-ЯЁ][а-яё\-]+(?:\s+[А-ЯЁ][а-яё\-]+){0,2})")
+
+_LOGIN_JS = """
+async ([username, password]) => {
+    const resp = await fetch('%s', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({username, password})
+    });
+    if (resp.ok) {
+        return {status: resp.status, ok: true, token: resp.headers.get('Authorization')};
+    }
+    return {status: resp.status, ok: false, text: await resp.text()};
+}
+""" % LOGIN_URL
+
+_DECLARATIONS_JS = """
+async ([token, payload]) => {
+    const resp = await fetch('%s', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'Authorization': token},
+        body: JSON.stringify(payload)
+    });
+    if (resp.ok) {
+        return {status: resp.status, ok: true, data: await resp.json()};
+    }
+    return {status: resp.status, ok: false, text: await resp.text()};
+}
+""" % DECLARATIONS_URL
 
 
 class FsaParseError(RuntimeError):
-    """Ответ пришёл, но его не удалось разобрать — формат API другой."""
-
-
-def _get_token(client: httpx.Client) -> str:
-    """POST /login с одноразовой session-cookie, токен приходит в
-    заголовке ОТВЕТА Authorization, не в теле (снято живьём, см. докстринг
-    модуля). ЗОНА РИСКА: сама механика (логин/куки/заголовок) не прогнана
-    в этой сессии из-за блокировки сети — только по дампу пользователя."""
-    session_cookie = secrets.token_hex(48)
-    client.cookies.set("session-cookie", session_cookie, domain="pub.fsa.gov.ru")
-
-    resp = client.post(
-        LOGIN_URL,
-        json={"username": _ANON_USERNAME, "password": _ANON_PASSWORD},
-        timeout=config.HTTP_TIMEOUT,
-    )
-    resp.raise_for_status()
-    token = resp.headers.get("Authorization")
-    if not token:
-        raise FsaParseError("POST /login отработал (200), но заголовок Authorization пуст")
-    return token
+    """Ответ пришёл, но его не удалось разобрать — формат API другой, или
+    сайт отказал (антибот/бан) — текст ошибки содержит, что именно."""
 
 
 def _build_payload(date_from: date, date_to: date, page: int) -> dict:
@@ -173,23 +161,6 @@ def _build_payload(date_from: date, date_to: date, page: int) -> dict:
     }
 
 
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_fixed(2),
-    retry=retry_if_exception_type(httpx.HTTPError),
-    reraise=True,
-)
-def _fetch_page(client: httpx.Client, token: str, date_from: date, date_to: date, page: int) -> dict:
-    resp = client.post(
-        DECLARATIONS_URL,
-        json=_build_payload(date_from, date_to, page),
-        headers={"Authorization": token},
-        timeout=config.HTTP_TIMEOUT,
-    )
-    resp.raise_for_status()
-    return resp.json()
-
-
 def _extract_city(address: Optional[str]) -> Optional[str]:
     """applicantAddress — полный адрес одной строкой, вытаскиваем город по
     "г Город"/"город Город". Не разобрался — просто None, это не мусор,
@@ -210,6 +181,62 @@ def _product_summary(item: dict) -> Optional[str]:
     return None
 
 
+def _iter_raw_items(days: int, limit: int, delay_lo: float, delay_hi: float) -> Iterator[dict]:
+    """Через настоящий Chromium: логин и запрос деклараций идут как
+    fetch() внутри реально загруженной страницы — тот же TLS/JS-контекст,
+    что у настоящего пользователя (см. докстринг модуля, почему это
+    понадобилось)."""
+    from playwright.sync_api import sync_playwright
+
+    date_to = date.today()
+    date_from = date_to - timedelta(days=days)
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=True)
+        try:
+            page = browser.new_page()
+            page.goto(REGISTRY_PAGE_URL, wait_until="networkidle", timeout=config.HTTP_TIMEOUT * 1000)
+
+            login_result = page.evaluate(_LOGIN_JS, [_ANON_USERNAME, _ANON_PASSWORD])
+            if not login_result.get("ok") or not login_result.get("token"):
+                raise FsaParseError(
+                    f"вход не удался: статус {login_result.get('status')}, "
+                    f"ответ: {login_result.get('text', '')[:500]!r}"
+                )
+            token = login_result["token"]
+
+            page_num = 0
+            yielded = 0
+            while yielded < limit:
+                payload = _build_payload(date_from, date_to, page_num)
+                result = page.evaluate(_DECLARATIONS_JS, [token, payload])
+                if not result.get("ok"):
+                    raise FsaParseError(
+                        f"запрос деклараций вернул {result.get('status')}: "
+                        f"{result.get('text', '')[:500]!r}"
+                    )
+                data = result["data"]
+                save_raw(SPEC.key, f"declarations_p{page_num}", str(data))
+                items = data.get("items", [])
+
+                if not items:
+                    break
+
+                for item in items:
+                    yield item
+                    yielded += 1
+                    if yielded >= limit:
+                        break
+
+                if len(items) < _PAGE_SIZE:
+                    break  # последняя страница короче полной — дальше пусто
+
+                page_num += 1
+                time.sleep(random.uniform(delay_lo, delay_hi))
+        finally:
+            browser.close()
+
+
 def collect(settings: dict) -> Iterator[RawLead]:
     """Единственная обязательная функция источника (5.1 ТЗ)."""
     regions = set(settings.get("regions") or config.TARGET_REGIONS)
@@ -218,53 +245,30 @@ def collect(settings: dict) -> Iterator[RawLead]:
     delay_lo, delay_hi = settings.get("delay_sec", config.REQUEST_DELAY)
 
     date_to = date.today()
-    date_from = date_to - timedelta(days=days)
 
-    yielded = 0
-    with httpx.Client(headers=_BROWSER_HEADERS, follow_redirects=True) as client:
-        token = _get_token(client)
+    for item in _iter_raw_items(days, limit, delay_lo, delay_hi):
+        number = item.get("number") or ""
+        inn = item.get("creatorInn")
+        if not number or not inn or not validate_inn(inn):
+            continue  # без номера или без валидного ИНН — брак, не связываем (15.1 ТЗ)
+        if region_of(inn) not in regions:
+            continue
 
-        page = 0
-        while yielded < limit:
-            data = _fetch_page(client, token, date_from, date_to, page)
-            save_raw(SPEC.key, f"declarations_p{page}", str(data))
-            items = data.get("items", [])
-
-            if not items:
-                break
-
-            for item in items:
-                number = item.get("number") or ""
-                inn = item.get("creatorInn")
-                if not number or not inn or not validate_inn(inn):
-                    continue  # без номера или без валидного ИНН — брак, не связываем (15.1 ТЗ)
-                if region_of(inn) not in regions:
-                    continue
-
-                yield RawLead(
-                    name=item.get("applicantName") or "",
-                    source="fsa",
-                    signal_type=SPEC.signal_type,
-                    signal_date=item.get("declDate") or date_to.isoformat(),
-                    dedup_key=f"fsa|{SPEC.signal_type}|{number}",
-                    url=None,
-                    summary=_product_summary(item),
-                    product_code=None,
-                    city=_extract_city(item.get("applicantAddress")),
-                    site=None,
-                    phone=None,
-                    inn=inn,
-                    raw_path=None,
-                )
-                yielded += 1
-                if yielded >= limit:
-                    break
-
-            if len(items) < _PAGE_SIZE:
-                break  # последняя страница короче полной — дальше пусто
-
-            page += 1
-            time.sleep(random.uniform(delay_lo, delay_hi))
+        yield RawLead(
+            name=item.get("applicantName") or "",
+            source="fsa",
+            signal_type=SPEC.signal_type,
+            signal_date=item.get("declDate") or date_to.isoformat(),
+            dedup_key=f"fsa|{SPEC.signal_type}|{number}",
+            url=None,
+            summary=_product_summary(item),
+            product_code=None,
+            city=_extract_city(item.get("applicantAddress")),
+            site=None,
+            phone=None,
+            inn=inn,
+            raw_path=None,
+        )
 
 
 def _main() -> None:
@@ -297,10 +301,7 @@ def _main() -> None:
             new_companies += int(result.company_new)
             new_signals += int(result.signal_new)
     except FsaParseError as exc:
-        console.print(f"[red]fsa_declarations: не удалось разобрать ответ — {exc}[/red]")
-        sys.exit(1)
-    except httpx.HTTPError as exc:
-        console.print(f"[red]fsa_declarations: сетевая ошибка — {exc}[/red]")
+        console.print(f"[red]fsa_declarations: сбой — {exc}[/red]")
         sys.exit(1)
     finally:
         conn.close()
