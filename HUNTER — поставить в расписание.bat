@@ -1,26 +1,3 @@
 @echo off
 chcp 65001 >nul
-cd /d "%~dp0"
-
-if not exist ".pyembed\python.exe" (
-    echo Окружение не найдено. Сначала запустите "HUNTER — установить.bat".
-    pause
-    exit /b 1
-)
-
-echo Создаю задание в планировщике Windows: hunter.py run каждую ночь в 02:00...
-schtasks /create /tn "HUNTER-PRO ночной сбор" /tr "\"%~dp0.pyembed\python.exe\" \"%~dp0hunter.py\" run" /sc daily /st 02:00 /f
-
-if %errorlevel%==0 (
-    echo.
-    echo Готово. Задание "HUNTER-PRO ночной сбор" создано, запуск каждую ночь в 02:00.
-    echo Компьютер спит в это время — ничего страшного, следующей ночью догонит
-    echo ^(раздел X ТЗ^). Если хочешь наверняка: планировщик заданий Windows -^>
-    echo найди задание -^> Свойства -^> вкладка "Условия" -^> "Выводить компьютер
-    echo из ждущего режима для выполнения задачи".
-) else (
-    echo.
-    echo Не удалось создать задание. Запустите этот файл от имени администратора
-    echo ^(правая кнопка мыши -^> "Запуск от имени администратора"^).
-)
-pause
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0schedule-install.ps1"

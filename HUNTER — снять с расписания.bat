@@ -1,4 +1,3 @@
 @echo off
 chcp 65001 >nul
-schtasks /delete /tn "HUNTER-PRO ночной сбор" /f
-pause
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0schedule-remove.ps1"
