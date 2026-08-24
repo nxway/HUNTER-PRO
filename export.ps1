@@ -1,5 +1,4 @@
 ﻿$ErrorActionPreference = "Stop"
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $root
@@ -11,5 +10,6 @@ if (-not (Test-Path $PyExe)) {
     exit 1
 }
 
+$env:PYTHONPATH = $root
 & $PyExe (Join-Path $root "hunter.py") export
 Read-Host "Нажмите Enter для выхода"

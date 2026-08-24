@@ -1,5 +1,4 @@
 ﻿$ErrorActionPreference = "Stop"
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $root
@@ -7,6 +6,24 @@ Set-Location $root
 $PyVer = "3.12.7"
 $PyDir = Join-Path $root ".pyembed"
 $PyExe = Join-Path $PyDir "python.exe"
+
+function Repair-PthFile {
+    # Портативный Python держит sys.path под полным контролем файла
+    # python3xx._pth: по умолчанию туда не входит ни site-packages (нужно
+    # для pip), ни папка проекта (нужно для "import config"/"import webui"
+    # и т.п. — без этого `python -m webui.app` не найдёт webui вообще,
+    # даже если рабочая папка правильная). Патчим оба раза: и site-packages,
+    # и ".." (папка проекта, она на уровень выше .pyembed). Идемпотентно —
+    # безопасно звать повторно на уже пропатченном файле.
+    $pthFile = Get-ChildItem -Path $PyDir -Filter "python3*._pth" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $pthFile) { return }
+    $lines = Get-Content $pthFile.FullName
+    $lines = $lines -replace '^#\s*import site', 'import site'
+    if ($lines -notcontains '..') {
+        $lines += '..'
+    }
+    Set-Content -Path $pthFile.FullName -Value $lines
+}
 
 try {
     if (-not (Test-Path $PyExe)) {
@@ -20,12 +37,7 @@ try {
         Expand-Archive -Path $zipPath -DestinationPath $PyDir -Force
         Remove-Item $zipPath -ErrorAction SilentlyContinue
 
-        # В портативной сборке site-packages выключены по умолчанию —
-        # включаем, иначе pip и наши зависимости не заработают.
-        $pthFile = Get-ChildItem -Path $PyDir -Filter "python3*._pth" | Select-Object -First 1
-        if ($pthFile) {
-            (Get-Content $pthFile.FullName) -replace '#import site', 'import site' | Set-Content $pthFile.FullName
-        }
+        Repair-PthFile
 
         Write-Host "Устанавливаю pip..."
         $getPipUrl = "https://bootstrap.pypa.io/get-pip.py"
@@ -34,6 +46,10 @@ try {
         & $PyExe $getPipPath --no-warn-script-location
         Remove-Item $getPipPath -ErrorAction SilentlyContinue
     }
+
+    # На случай, если .pyembed уже был от прошлой попытки без этой правки —
+    # чиним в любом случае, не только при первой установке.
+    Repair-PthFile
 
     Write-Host "Ставлю зависимости проекта внутрь .pyembed..."
     & $PyExe -m pip install --no-warn-script-location -r (Join-Path $root "requirements.txt")

@@ -1,5 +1,4 @@
 ﻿$ErrorActionPreference = "Stop"
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $root

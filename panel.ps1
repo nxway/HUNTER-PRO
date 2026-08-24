@@ -1,5 +1,4 @@
 ﻿$ErrorActionPreference = "Stop"
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $root
@@ -15,5 +14,6 @@ Write-Host "Открываю панель в браузере: http://127.0.0.1:
 Write-Host "Это окно можно свернуть, но не закрывать - пока оно открыто, панель работает."
 Write-Host "Закроете окно - панель выключится."
 
+$env:PYTHONPATH = $root
 & $PyExe -m webui.app
 Read-Host "Нажмите Enter для выхода"
