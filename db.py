@@ -128,6 +128,45 @@ MIGRATIONS: dict[int, list[str]] = {
         "ALTER TABLE companies ADD COLUMN export_count INTEGER DEFAULT 0",
         "CREATE INDEX IF NOT EXISTS idx_comp_export ON companies(exported_at)",
     ],
+    # Этап 4, разделы 15.3, 15.5, 16.1 ТЗ: справочник страны по ИНН (для
+    # разрешения ИНН по названию), очередь неоднозначных совпадений,
+    # выручка за три года и признак группы связанных юрлиц.
+    # Отступление от DDL 15.3: добавлена колонка employees — раздел X
+    # (этап 4) явно требует численность из наборов ФНС, а исходная схема
+    # registry её не предусматривает.
+    3: [
+        """
+        CREATE TABLE IF NOT EXISTS registry (
+            inn        TEXT PRIMARY KEY,
+            name_raw   TEXT,
+            name_norm  TEXT,
+            city       TEXT,
+            region     INTEGER,
+            okved      TEXT,
+            revenue    INTEGER,
+            tax_regime TEXT,
+            employees  INTEGER
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_registry_norm ON registry(name_norm)",
+        """
+        CREATE TABLE IF NOT EXISTS inn_candidates (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            lead_key    TEXT NOT NULL,
+            name_raw    TEXT NOT NULL,
+            city        TEXT,
+            cand_inn    TEXT,
+            cand_name   TEXT,
+            cand_city   TEXT,
+            why         TEXT,
+            created_at  TEXT NOT NULL
+        )
+        """,
+        "ALTER TABLE companies ADD COLUMN revenue_prev INTEGER",
+        "ALTER TABLE companies ADD COLUMN revenue_prev2 INTEGER",
+        "ALTER TABLE companies ADD COLUMN revenue_trend TEXT",
+        "ALTER TABLE companies ADD COLUMN group_id TEXT",
+    ],
 }
 
 
