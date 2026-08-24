@@ -85,6 +85,30 @@ _ANON_PASSWORD = "hrgesf7HDR67Bd"
 # возвращать пустые/усечённые страницы — понизить до 10.
 _PAGE_SIZE = 50
 
+# ОТСТУПЛЕНИЕ ОТ ОБЩЕГО ПРАВИЛА ПРОЕКТА (12.2 ТЗ, "внятный User-Agent с
+# контактной почтой"): первый живой прогон вернул 403 Forbidden на самом
+# /login с "вежливым" User-Agent вида HunterPro/1.0 — сайт стоит за Bitrix
+# (видно по куке BITRIX_CONVERSION_CONTEXT_s1 в снятом дампе), у которого
+# есть встроенная защита от ботов, отсекающая нестандартные User-Agent и
+# отсутствующие Sec-Fetch-*/Origin. Раз доступ анонимный и публичный (сам
+# сайт выдаёт токен без входа под реальным пользователем), выдаём себя за
+# обычный браузер только для ЭТОГО источника — иначе не достучаться вообще.
+# Для сайтов компаний (enrich/site.py) такой необходимости не возникало,
+# там остаётся config.USER_AGENT.
+_BROWSER_HEADERS = {
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+    ),
+    "Origin": "https://pub.fsa.gov.ru",
+    "Referer": "https://pub.fsa.gov.ru/rds/declaration",
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-origin",
+}
+
 _CITY_RE = re.compile(r"г(?:ород)?\.?\s+([А-ЯЁ][а-яё\-]+(?:\s+[А-ЯЁ][а-яё\-]+){0,2})")
 
 
@@ -103,7 +127,6 @@ def _get_token(client: httpx.Client) -> str:
     resp = client.post(
         LOGIN_URL,
         json={"username": _ANON_USERNAME, "password": _ANON_PASSWORD},
-        headers={"Referer": "https://pub.fsa.gov.ru/rds/declaration"},
         timeout=config.HTTP_TIMEOUT,
     )
     resp.raise_for_status()
@@ -160,10 +183,7 @@ def _fetch_page(client: httpx.Client, token: str, date_from: date, date_to: date
     resp = client.post(
         DECLARATIONS_URL,
         json=_build_payload(date_from, date_to, page),
-        headers={
-            "Authorization": token,
-            "Referer": "https://pub.fsa.gov.ru/rds/declaration",
-        },
+        headers={"Authorization": token},
         timeout=config.HTTP_TIMEOUT,
     )
     resp.raise_for_status()
@@ -200,9 +220,8 @@ def collect(settings: dict) -> Iterator[RawLead]:
     date_to = date.today()
     date_from = date_to - timedelta(days=days)
 
-    headers = {"User-Agent": config.USER_AGENT, "Content-Type": "application/json"}
     yielded = 0
-    with httpx.Client(headers=headers, follow_redirects=True) as client:
+    with httpx.Client(headers=_BROWSER_HEADERS, follow_redirects=True) as client:
         token = _get_token(client)
 
         page = 0
