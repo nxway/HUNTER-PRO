@@ -194,7 +194,10 @@ def enrich_all() -> int:
     """Проставляет выручку (со сдвигом в историю revenue_prev/revenue_prev2),
     налоговый режим и численность нашим companies по registry. Компанию,
     которой нет в свежем registry, помечает legal_status='dead' (15.2 ТЗ:
-    "если ИНН нет в наборах последних лет — фирма не действует"). Ручные
+    "если ИНН нет в наборах последних лет — фирма не действует") — но
+    только если registry вообще не пуст (см. защиту ниже: пока ни один
+    набор ФНС не загружен, "отсутствие" значит "не проверяли", а не
+    "мертва"). Ручные
     поля (my_status, note и т.п.) эта функция не трогает вообще — она
     пишет только в источниковые поля companies, как и apply_enrichment
     (4.3.2 ТЗ).
@@ -202,6 +205,14 @@ def enrich_all() -> int:
     Возвращает число обновлённых компаний."""
     conn = db.init_db()
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    # Защита от пустого справочника: пока ни один набор ФНС ни разу не
+    # загружен через load_dataset(), registry пуст, и "нет в registry"
+    # значило бы "все мертвы" — это неверно, это значит "ещё не проверяли".
+    # Раздел 15.2 ТЗ подразумевает наличие СВЕЖЕГО набора, а не его отсутствие.
+    if conn.execute("SELECT 1 FROM registry LIMIT 1").fetchone() is None:
+        conn.close()
+        return 0
 
     rows = conn.execute("SELECT inn, revenue, revenue_prev FROM companies").fetchall()
     updated = 0

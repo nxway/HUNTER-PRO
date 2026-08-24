@@ -44,6 +44,12 @@ OKVED_PREFIXES = [
 MODEL_CHEAP = ""      # массовая классификация — выбрать через ai/classify.py --eval
 MODEL_FALLBACK = ""   # если основная недоступна
 
+# --- Резервный расчёт цены за 1000 токенов, если OpenRouter не вернул usage.cost ---
+# Заглушка — впиши реальные цены для выбранных моделей после --eval (VI.1 ТЗ).
+PRICE_TABLE: dict[str, dict[str, float]] = {
+    # "имя-модели:floor": {"in": 0.0002, "out": 0.0006},
+}
+
 # --- Предохранители ---
 MAX_AI_CALLS_PER_RUN = 300
 MAX_AI_SPEND_PER_DAY_USD = 0.50    # жёсткий стоп, не предупреждение
