@@ -233,3 +233,26 @@ def ingest(conn: sqlite3.Connection, lead: RawLead) -> IngestResult:
     signal_new = cur.rowcount > 0
     conn.commit()
     return IngestResult(company_new, company_updated, signal_new)
+
+
+_ENRICHMENT_FIELDS = {"phone", "phone_extra", "site", "city", "email"}
+
+
+def apply_enrichment(conn: sqlite3.Connection, inn: str, fields: dict) -> bool:
+    """Точечно обновляет поля обогащения одной уже существующей компании,
+    никогда не перетирая уже заполненное значение (4.3.2 ТЗ) — используется
+    вне потока RawLead/ingest, например энричерами вроде enrich/site.py.
+    fields — только ключи из _ENRICHMENT_FIELDS; остальное — ошибка
+    вызывающего кода, а не тихий пропуск."""
+    unknown = set(fields) - _ENRICHMENT_FIELDS
+    if unknown:
+        raise ValueError(f"apply_enrichment: нельзя обогащать поля {unknown}")
+    if not fields:
+        return False
+    set_clause = ", ".join(f"{col} = COALESCE({col}, :{col})" for col in fields)
+    cur = conn.execute(
+        f"UPDATE companies SET {set_clause}, updated_at = :now WHERE inn = :inn",
+        {**fields, "now": _now(), "inn": inn},
+    )
+    conn.commit()
+    return cur.rowcount > 0
