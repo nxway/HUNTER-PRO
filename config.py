@@ -23,6 +23,8 @@ LOG_DIR = BASE_DIR / "logs"
 # --- Секреты (значения читаются из .env, сюда не вписывать) ---
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 FNS_API_KEY = os.getenv("FNS_API_KEY", "")
+FSSP_API_TOKEN = os.getenv("FSSP_API_TOKEN", "")          # раздел 16.2 ТЗ, api-ip.fssp.gov.ru
+FEDRESURS_API_TOKEN = os.getenv("FEDRESURS_API_TOKEN", "")  # раздел 16.2 ТЗ, fedresurs.ru
 
 # --- Регионы работы (коды регионов РФ, первые две цифры ИНН) ---
 TARGET_REGIONS = [77, 50, 78, 47, 66, 52]  # Москва, МО, СПб, ЛО, Свердл., Нижег.

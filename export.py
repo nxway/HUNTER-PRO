@@ -12,6 +12,7 @@ export.py — сборка .xlsx из базы (раздел VIII ТЗ). Нич�
 """
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -81,6 +82,18 @@ def _reason(row: dict) -> str:
     return f"{label} от {date_str}"
 
 
+def _risk_text(raw: Optional[str]) -> str:
+    """risk_flags хранится в companies как JSON-список (enrich/risk.py) —
+    здесь превращаем в человекочитаемую строку для колонки "Риск" (8.2 ТЗ)."""
+    if not raw:
+        return ""
+    try:
+        flags = json.loads(raw)
+    except (TypeError, ValueError):
+        return str(raw)
+    return "; ".join(flags) if isinstance(flags, list) else str(flags)
+
+
 def build_workbook(rows: list[dict]) -> openpyxl.Workbook:
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -99,7 +112,7 @@ def build_workbook(rows: list[dict]) -> openpyxl.Workbook:
                 row.get("cargo") or "",
                 row.get("body_type") or "",
                 _reason(row),
-                row.get("risk_flags") or "",
+                _risk_text(row.get("risk_flags")),
                 _BUCKET_LABELS.get(row["bucket"], row["bucket"]),
                 row["inn"],
                 "",

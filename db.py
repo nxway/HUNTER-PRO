@@ -167,6 +167,12 @@ MIGRATIONS: dict[int, list[str]] = {
         "ALTER TABLE companies ADD COLUMN revenue_trend TEXT",
         "ALTER TABLE companies ADD COLUMN group_id TEXT",
     ],
+    # Этап 5, раздел 16.3 ТЗ: риск — отдельное поле, не часть отбора.
+    4: [
+        "ALTER TABLE companies ADD COLUMN risk_level TEXT",
+        "ALTER TABLE companies ADD COLUMN risk_flags TEXT",
+        "ALTER TABLE companies ADD COLUMN risk_checked_at TEXT",
+    ],
 }
 
 
