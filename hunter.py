@@ -69,7 +69,8 @@ def cmd_run(args: argparse.Namespace) -> None:
     stats = enrich_missing_phones(conn, args.enrich_limit, console=console)
     logger.info(
         f"обогащение телефона: проверено {stats['checked']} · нашли на сайте {stats['via_site']} "
-        f"· нашли в 2ГИС {stats['via_dgis']} · не нашли {stats['not_found']}"
+        f"· нашли в 2ГИС {stats['via_dgis']} · отклонили чужой сайт {stats['rejected_site']} "
+        f"· не нашли {stats['not_found']}"
     )
 
     # ИИ — раздел IX ТЗ: только если модель выбрана (--eval уже прогнан),

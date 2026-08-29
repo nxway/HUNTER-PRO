@@ -36,7 +36,7 @@ import httpx
 from selectolax.parser import HTMLParser
 
 import config
-from enrich.inn import validate as validate_inn
+from enrich.inn import normalize_name, validate as validate_inn
 
 _PHONE_RE = re.compile(r"(?:\+7|8)[\s\-\(]*\d{3}[\)\s\-]*\d{3}[\s\-]?\d{2}[\s\-]?\d{2}")
 _EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
@@ -119,6 +119,22 @@ def _parse_search_results(html: str) -> Optional[str]:
     return _unwrap_ddg_redirect(href) if href else None
 
 
+def site_matches_company(data: SiteData, company_name: str, company_inn: Optional[str]) -> bool:
+    """Проверка, что найденный сайт правда принадлежит компании, а не
+    оказался чужой страницей (справочник, агрегатор, конкурент с похожим
+    именем и т.п.) — иначе доверять телефону/данным оттуда нельзя (7.1,
+    15.3 ТЗ: "сомневаешься — не связывай", неверные данные хуже
+    отсутствующих). Найдено на реальном прогоне: без этой проверки поиск
+    иногда попадал на сайт-агрегатор и брал ЕГО телефон вместо телефона
+    компании — один и тот же чужой номер оказывался у нескольких разных
+    компаний в выгрузке."""
+    if company_inn and data.inn and data.inn == company_inn:
+        return True
+    name_norm = normalize_name(company_name)
+    text_norm = (data.text or "").lower().replace("ё", "е")
+    return bool(name_norm) and name_norm in text_norm
+
+
 def find_site(name: str, city: Optional[str] = None) -> Optional[str]:
     """Ищет официальный сайт компании через поисковик. Возвращает URL
     первого результата или None — дальше решает вызывающий код (проверить
@@ -148,22 +164,30 @@ def enrich_missing_phones(conn, limit: int, console=None) -> dict[str, int]:
         (limit,),
     ).fetchall()
 
-    via_site = via_dgis = not_found = 0
+    via_site = via_dgis = not_found = rejected = 0
     for row in rows:
         inn, name, city, site = row["inn"], row["name"], row["city"], row["site"]
         found_phone: Optional[str] = None
-        found_site = site
+        found_site: Optional[str] = None
         found_city = city
         phone_source: Optional[str] = None
 
         try:
-            if not found_site:
-                found_site = find_site(name, city)
-            if found_site:
-                data = fetch_site_text(found_site)
-                if data.phones:
-                    found_phone = data.phones[0]
-                    phone_source = "site"
+            candidate_site = site or find_site(name, city)
+            if candidate_site:
+                data = fetch_site_text(candidate_site)
+                if site_matches_company(data, name, inn):
+                    found_site = candidate_site
+                    if data.phones:
+                        found_phone = data.phones[0]
+                        phone_source = "site"
+                else:
+                    # Нашли сайт, но он не похож на компанию — не сохраняем
+                    # ни его, ни телефон с него (7.1 ТЗ: неверные данные
+                    # хуже отсутствующих), пробуем 2ГИС как добивку.
+                    rejected += 1
+                    if console:
+                        console.print(f"[yellow]{inn}: найденный сайт не похож на компанию, пропускаю[/yellow]")
         except httpx.HTTPError as exc:
             if console:
                 console.print(f"[yellow]{inn}: сайт недоступен ({exc}), пробую 2ГИС[/yellow]")
@@ -199,7 +223,13 @@ def enrich_missing_phones(conn, limit: int, console=None) -> dict[str, int]:
 
         time.sleep(random.uniform(*config.REQUEST_DELAY))
 
-    return {"checked": len(rows), "via_site": via_site, "via_dgis": via_dgis, "not_found": not_found}
+    return {
+        "checked": len(rows),
+        "via_site": via_site,
+        "via_dgis": via_dgis,
+        "not_found": not_found,
+        "rejected_site": rejected,
+    }
 
 
 def _main() -> None:
@@ -219,7 +249,8 @@ def _main() -> None:
     conn.close()
     console.print(
         f"enrich.site: проверено {stats['checked']} · нашли на сайте {stats['via_site']} "
-        f"· нашли в 2ГИС {stats['via_dgis']} · не нашли {stats['not_found']} "
+        f"· нашли в 2ГИС {stats['via_dgis']} · отклонили чужой сайт {stats['rejected_site']} "
+        f"· не нашли {stats['not_found']} "
         f"· зелёных {counts['green']} · жёлтых {counts['yellow']} · красных {counts['red']}"
     )
 
