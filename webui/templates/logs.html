@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Лог — HUNTER-PRO{% endblock %}
+{% block content %}
+
+<div class="card">
+  <h2>logs/hunter.log <span class="muted small" id="checked-at"></span></h2>
+  <p class="muted small">Последние 300 строк, обновляется само раз в 3 секунды.</p>
+  <pre class="log-view" id="log-view">загрузка…</pre>
+</div>
+
+<script>
+(function () {
+  const view = document.getElementById('log-view');
+  const checkedAt = document.getElementById('checked-at');
+
+  function escapeHtml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function colorize(line) {
+    const escaped = escapeHtml(line);
+    if (line.includes(' ERROR:')) return '<span class="lvl-ERROR">' + escaped + '</span>';
+    if (line.includes(' WARNING:')) return '<span class="lvl-WARNING">' + escaped + '</span>';
+    return escaped;
+  }
+
+  async function refresh() {
+    try {
+      const resp = await fetch("{{ url_for('api_logs') }}");
+      const data = await resp.json();
+      const nearBottom = view.scrollTop + view.clientHeight >= view.scrollHeight - 30;
+      if (!data.exists) {
+        view.textContent = 'Файла ещё нет — лог появится после первого запуска hunter.py run.';
+      } else {
+        view.innerHTML = data.lines.map(colorize).join('\n');
+        if (nearBottom) view.scrollTop = view.scrollHeight;
+      }
+      checkedAt.textContent = 'обновлено в ' + data.checked_at;
+    } catch (e) { /* локальный сервер, сеть не пропадает — тихо пропускаем */ }
+    setTimeout(refresh, 3000);
+  }
+  refresh();
+})();
+</script>
+{% endblock %}

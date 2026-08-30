@@ -1,0 +1,8 @@
+httpx
+selectolax
+playwright
+openpyxl
+python-dotenv
+tenacity
+rich
+flask

@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block title %}Дашборд — HUNTER-PRO{% endblock %}
+{% block content %}
+
+<div class="stat-row">
+  <div class="stat-card green"><div class="num">{{ counts.green }}</div><div class="label">Зелёная корзина</div></div>
+  <div class="stat-card yellow"><div class="num">{{ counts.yellow }}</div><div class="label">Жёлтая корзина</div></div>
+  <div class="stat-card red"><div class="num">{{ counts.red }}</div><div class="label">Красная (скрыта из выгрузки)</div></div>
+  <div class="stat-card"><div class="num">{{ counts.total }}</div><div class="label">Всего компаний</div></div>
+</div>
+
+<div class="card">
+  <h2>Управление</h2>
+  <div class="actions-row">
+    <form method="post" action="{{ url_for('trigger_run') }}" id="run-form">
+      <button type="submit" class="btn" id="run-btn" {{ 'disabled' if run_status.running }}>Собрать</button>
+      <label class="small muted" style="margin-left:8px;">
+        <input type="checkbox" name="dry_run" id="dry-run-check"> без трат на ИИ/риск (--dry-run)
+      </label>
+    </form>
+    <form method="post" action="{{ url_for('trigger_export') }}">
+      <button type="submit" class="btn secondary" {{ 'disabled' if run_status.running }}>Выгрузить</button>
+    </form>
+    <span class="status-pill" id="status-pill">
+      <span class="status-dot {{ 'running' if run_status.running }}" id="status-dot"></span>
+      <span id="status-text">
+        {% if run_status.running %}идёт {{ run_status.kind }}…{% else %}простаивает{% endif %}
+      </span>
+    </span>
+  </div>
+  <p class="muted small" style="margin-top:10px; margin-bottom:0;">
+    Подробности — на <a href="{{ url_for('logs_page') }}">странице лога</a>.
+  </p>
+</div>
+
+<div class="card">
+  <h2>Компании</h2>
+  <form class="filters" method="get" action="{{ url_for('dashboard') }}">
+    <select name="bucket">
+      <option value="">Корзина: любая</option>
+      <option value="green" {{ 'selected' if filters.bucket == 'green' }}>Зелёная</option>
+      <option value="yellow" {{ 'selected' if filters.bucket == 'yellow' }}>Жёлтая</option>
+      <option value="red" {{ 'selected' if filters.bucket == 'red' }}>Красная</option>
+    </select>
+    <select name="my_status">
+      <option value="">Статус: любой</option>
+      <option value="new" {{ 'selected' if filters.my_status == 'new' }}>новая</option>
+      <option value="exported" {{ 'selected' if filters.my_status == 'exported' }}>выгружена</option>
+      <option value="called" {{ 'selected' if filters.my_status == 'called' }}>звонили</option>
+      <option value="client" {{ 'selected' if filters.my_status == 'client' }}>клиент</option>
+      <option value="refused" {{ 'selected' if filters.my_status == 'refused' }}>отказ</option>
+    </select>
+    <select name="region">
+      <option value="">Регион: любой</option>
+      {% for r in regions %}
+        <option value="{{ r }}" {{ 'selected' if filters.region == r|string }}>{{ r }}</option>
+      {% endfor %}
+    </select>
+    <input type="text" name="q" placeholder="Название, город, ИНН…" value="{{ filters.q }}">
+    <button type="submit" class="btn secondary">Применить</button>
+    {% if filters.bucket or filters.my_status or filters.region or filters.q %}
+      <a href="{{ url_for('dashboard') }}" class="btn secondary">Сбросить</a>
+    {% endif %}
+  </form>
+
+  {% if companies %}
+  <div style="overflow-x:auto;">
+  <table>
+    <thead>
+      <tr>
+        <th>Компания</th><th>Телефон</th><th>Город</th><th>Что возит</th>
+        <th>Корзина</th><th>Статус</th><th>Регион</th><th>ИНН</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in companies %}
+      <tr>
+        <td>{{ c.name }}</td>
+        <td>{{ c.phone or '—' }}</td>
+        <td>{{ c.city or '—' }}</td>
+        <td>{{ c.cargo or '—' }}</td>
+        <td><span class="badge {{ c.bucket }}">{{ c.bucket_label }}</span></td>
+        <td><span class="badge status">{{ c.status_label or '—' }}</span></td>
+        <td>{{ c.region_code or '—' }}</td>
+        <td class="muted">{{ c.inn }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+
+  <div class="pagination">
+    {% if page > 1 %}
+      <a href="{{ url_for('dashboard', page=page - 1, bucket=filters.bucket, my_status=filters.my_status, region=filters.region, q=filters.q) }}">← назад</a>
+    {% else %}
+      <span class="disabled">← назад</span>
+    {% endif %}
+    <span class="current">{{ page }} / {{ total_pages }}</span>
+    {% if page < total_pages %}
+      <a href="{{ url_for('dashboard', page=page + 1, bucket=filters.bucket, my_status=filters.my_status, region=filters.region, q=filters.q) }}">вперёд →</a>
+    {% else %}
+      <span class="disabled">вперёд →</span>
+    {% endif %}
+    <span class="muted small">· всего найдено: {{ total }}</span>
+  </div>
+  {% else %}
+  <div class="empty-state">Компаний по этим фильтрам нет. {% if not counts.total %}База ещё пуста — запустите «Собрать».{% endif %}</div>
+  {% endif %}
+</div>
+
+<script>
+(function () {
+  const dot = document.getElementById('status-dot');
+  const text = document.getElementById('status-text');
+  const runBtn = document.getElementById('run-btn');
+  let wasRunning = {{ 'true' if run_status.running else 'false' }};
+
+  async function poll() {
+    try {
+      const resp = await fetch("{{ url_for('api_status') }}");
+      const st = await resp.json();
+      if (st.running) {
+        dot.classList.add('running');
+        text.textContent = 'идёт ' + st.kind + '…';
+        document.querySelectorAll('.actions-row button[type="submit"]').forEach(b => b.disabled = true);
+      } else {
+        dot.classList.remove('running');
+        text.textContent = 'простаивает';
+        document.querySelectorAll('.actions-row button[type="submit"]').forEach(b => b.disabled = false);
+        if (wasRunning) {
+          window.location.reload();
+          return;
+        }
+      }
+      wasRunning = st.running;
+    } catch (e) { /* тихо игнорируем — панель локальная, сеть не пропадает */ }
+    setTimeout(poll, 2000);
+  }
+  poll();
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,13 @@
+.env
+settings.json
+leads.sqlite
+leads.sqlite-wal
+leads.sqlite-shm
+raw/
+logs/
+exports/
+inbox/
+__pycache__/
+*.pyc
+.venv/
+.pyembed/
