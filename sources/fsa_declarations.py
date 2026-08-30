@@ -239,7 +239,10 @@ def _iter_raw_items(days: int, limit: int, delay_lo: float, delay_hi: float) -> 
 
 def collect(settings: dict) -> Iterator[RawLead]:
     """Единственная обязательная функция источника (5.1 ТЗ)."""
-    regions = set(settings.get("regions") or config.TARGET_REGIONS)
+    regions_setting = settings.get("regions")
+    if regions_setting is None:
+        regions_setting = config.TARGET_REGIONS
+    regions = set(regions_setting)  # пусто — без ограничения, вся Россия
     days = int(settings.get("days", SPEC.default_settings["days"]))
     limit = int(settings.get("limit", SPEC.default_settings["limit"]))
     delay_lo, delay_hi = settings.get("delay_sec", config.REQUEST_DELAY)
@@ -251,8 +254,8 @@ def collect(settings: dict) -> Iterator[RawLead]:
         inn = item.get("creatorInn")
         if not number or not inn or not validate_inn(inn):
             continue  # без номера или без валидного ИНН — брак, не связываем (15.1 ТЗ)
-        if region_of(inn) not in regions:
-            continue
+        if regions and region_of(inn) not in regions:
+            continue  # пустой regions = без ограничения по региону
 
         yield RawLead(
             name=item.get("applicantName") or "",
